@@ -1,0 +1,31 @@
+import { trace } from "IO"
+import { fromMaybe } from "Maybe"
+import { Monied, Item, getInventoryItem, hasInventoryItem, canChargeCustomer, chargeCustomer, decrementInventoryTotal, canDecrementItemTotal, giveItem, removeItem, totalInventoryForItem } from "./Bakery"
+
+bakery = Monied(
+  "Tartine Bakery",
+  0,
+  [
+    Item("cookie", 3, 10),
+    Item("croissant", 5, 6),
+    Item("almond croissant", 8, 5),
+    Item("morning bun", 8, 3),
+    Item("cake", 20, 1),
+    Item("catering", 100, 1),
+  ]
+)
+
+jimmy = Monied("Jimmy", 50, [])
+
+main :: List String -> {}
+main = () => {
+  getInventoryItem("cake", bakery) |> trace("Here are the cakes that the bakery has.")
+  hasInventoryItem("cake", bakery) |> trace("Can I buy a cake?")
+  canChargeCustomer(20, jimmy) |> trace("Can I charge Jimmy 20?")
+  chargeCustomer(20, jimmy) |> fromMaybe(jimmy) |> trace("Charged jimmy 20!")
+  decrementInventoryTotal(Item("shit", 10, 1)) |> trace("take no more shit!")
+  canDecrementItemTotal(Item("shit", 10, 0)) |> trace("can you take a shit?")
+  giveItem("raisin bread", 20, bakery) |> trace("Does the bakery sell raisin bread?")
+  giveItem("cookie", 10, bakery) |> totalInventoryForItem("cookie") |> trace("How many cookies does the bakery have?")
+  removeItem("cake", bakery) |> removeItem("cake", $) |> removeItem("cake", $) |> trace("I ate 2-3 cakes")
+}

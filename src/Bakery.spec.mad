@@ -1,0 +1,245 @@
+import { Just } from "Maybe"
+import { test, assertEquals } from "Test"
+import type { Transaction } from "./Bakery"
+import {
+  Monied,
+  Item,
+  canAfford,
+  canChargeCustomer,
+  canDecrementItemTotal,
+  chargeCustomer,
+  costOfItem,
+  decrementInventoryTotal,
+  getInventoryItem,
+  giveItem,
+  hasInventoryItem,
+  incrementInventoryTotal,
+  modifyInventoryTotal,
+  order,
+  orderAgain,
+  removeItem,
+  totalInventoryForItem,
+  transactFrom,
+  transactTo,
+  transformItem,
+  updateInventoryFor,
+} from "./Bakery"
+
+bakery = Monied(
+  "Tartine Bakery",
+  0,
+  [
+    Item("cookie", 3, 10),
+    Item("croissant", 5, 6),
+    Item("almond croissant", 8, 5),
+    Item("morning bun", 8, 3),
+    Item("cake", 20, 1),
+    Item("catering", 100, 1),
+  ]
+)
+
+jimmy = Monied("Jimmy", 50, [])
+
+test("getInventoryItem", () =>
+  assertEquals(getInventoryItem("cake", bakery), Just(Item("cake", 20, 1)))
+)
+test("hasInventoryItem - true", () =>
+  assertEquals(hasInventoryItem("cake", bakery), true)
+)
+test("hasInventoryItem - false", () =>
+  assertEquals(hasInventoryItem("crap", bakery), false)
+)
+
+test("canChargeCustomer", () =>
+  assertEquals(
+    canChargeCustomer(20, jimmy),
+    true
+  )
+)
+
+test("chargeCustomer", () =>
+  pipe(
+    chargeCustomer(20),
+    where {
+      Just(z) => where (z) {
+        Monied(_, x, _) => assertEquals(x, 30)
+      }
+    }
+  )(jimmy)
+)
+
+test("decrementInventoryTotal", () =>
+  pipe(
+    decrementInventoryTotal,
+    where {
+      Item(_, _, x) => assertEquals(x, 0)
+    }
+  )(Item("shit", 10, 1))
+)
+
+test("incrementInventoryTotal", () =>
+  pipe(
+    incrementInventoryTotal,
+    where {
+      Item(_, _, x) => assertEquals(x, 2)
+    }
+  )(Item("shit", 10, 1))
+)
+
+test("canDecrementItemTotal - false", () =>
+  pipe(
+    canDecrementItemTotal,
+    (x) => assertEquals(false, x)
+  )(Item("shit", 10, 0))
+)
+
+test("canDecrementItemTotal - true", () =>
+  pipe(
+    canDecrementItemTotal,
+    (x) => assertEquals(true, x)
+  )(Item("shit", 10, 1))
+)
+
+test("giveItem - new item", () =>
+  assertEquals(true,
+    hasInventoryItem("raisin bread", giveItem("raisin bread", 20, bakery))
+  )
+)
+
+test("giveItem - update item", () =>
+  assertEquals(
+    pipe(
+      giveItem("cookie", 10),
+      totalInventoryForItem("cookie")
+    )(bakery),
+    11
+  )
+)
+
+test("removeItem", () =>
+  pipe(
+    removeItem("cake"),
+    removeItem("cake"),
+    removeItem("cake"),
+    totalInventoryForItem("cake"),
+    assertEquals(0)
+  )(bakery)
+)
+
+test("transformItem", () =>
+  pipe(
+    transformItem(100, where {
+      Item(a, b, c) => b * 2
+    }, "cake"),
+    assertEquals(40)
+  )(bakery)
+)
+
+test("costOfItem", () => 
+  pipe(
+    costOfItem("croissant"),
+    assertEquals(5)
+  )(bakery)
+)
+
+test("modifyInventoryTotal", () =>
+  pipe(
+    modifyInventoryTotal((z) => z * 2),
+    assertEquals(Item("morning bun", 8, 6))
+  )(Item("morning bun", 8, 3))
+)
+
+test("canAfford", () =>
+  pipe(
+    canAfford(200),
+    assertEquals(false)
+  )(Monied("Jimmy", 100, []))
+)
+
+test("transactTo", () =>
+  pipe(
+    transactTo(Item("crap", 10, 3)),
+    assertEquals(Monied("Jimmy", 90, [Item("crap", 10, 1)]))
+  )(Monied("Jimmy", 100, []))
+)
+
+test("transactFrom", () =>
+  pipe(
+    transactFrom(Item("crap", 10, 1)),
+    assertEquals(Monied("Shop", 20, [Item("crap", 10, 0)]))
+  )(Monied("Shop", 10, [Item("crap", 10, 1)]))
+)
+
+test("updateInventoryFor", () =>
+  pipe(
+    updateInventoryFor("cake", where {
+      Item(x, y, z) => Item(x, y - 1, z)
+    }),
+    assertEquals(Monied("dope", 100, [Item("cake", 0, 1)]))
+  )(Monied("dope", 100, [Item("cake", 1, 1)]))
+)
+
+test("order - success", () =>
+  pipe(
+    order(bakery, jimmy),
+    assertEquals({
+      shop: Monied(
+        "Tartine Bakery",
+        20,
+        [
+          Item("cookie", 3, 10),
+          Item("croissant", 5, 6),
+          Item("almond croissant", 8, 5),
+          Item("morning bun", 8, 3),
+          Item("cake", 20, 0),
+          Item("catering", 100, 1),
+        ]
+      ),
+      customer: Monied("Jimmy", 30, [Item("cake", 20, 1)])
+    })
+  )("cake")
+)
+
+test("order - failure", () =>
+  pipe(
+    order(bakery, Monied("Jimmy", 0, [])),
+    assertEquals({
+      shop: Monied(
+        "Tartine Bakery",
+        0,
+        [
+          Item("cookie", 3, 10),
+          Item("croissant", 5, 6),
+          Item("almond croissant", 8, 5),
+          Item("morning bun", 8, 3),
+          Item("cake", 20, 1),
+          Item("catering", 100, 1),
+        ]
+      ),
+      customer: Monied("Jimmy", 0, [])
+    })
+  )("cake")
+)
+
+test("orderAgain", () =>
+  pipe(
+    orderAgain("cookie"),
+    orderAgain("cookie"),
+    orderAgain("cookie"),
+    assertEquals({
+      shop: Monied(
+        "Tartine Bakery",
+        9,
+        [
+          Item("cookie", 3, 7),
+          Item("croissant", 5, 6),
+          Item("almond croissant", 8, 5),
+          Item("morning bun", 8, 3),
+          Item("cake", 20, 1),
+          Item("catering", 100, 1),
+        ]
+      ),
+      customer: Monied("Jimmy", 41, [Item("cookie", 3, 3)])
+    })
+  )({shop: bakery, customer: jimmy})
+)

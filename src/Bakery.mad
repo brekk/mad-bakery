@@ -1,0 +1,203 @@
+import { concat, find } from "List"
+import { when, always, ifElse } from "Function"
+import type { Maybe } from "Maybe"
+import { fromMaybe } from "Maybe"
+import { Nothing } from "Maybe"
+import { trace, log } from "IO"
+import { lt } from "Compare"
+import { max } from "Math"
+
+export type Monied name money inventory = Monied(name, money, inventory)
+
+export type Inventory name cost total = Item(name, cost, total)
+export alias InventoryItem = Inventory String Integer Integer
+export alias InventoryList = List(InventoryItem)
+export alias ThingWithMoney = Monied String Integer InventoryList
+
+getInventoryItem :: String -> ThingWithMoney -> Maybe InventoryItem
+export getInventoryItem = (item, monied) =>
+  where (monied) {
+    Monied(_, _, i) => find(where {
+      Item(name, _, _) => name == item
+    }, i)
+  }
+
+pay :: Integer -> ThingWithMoney -> ThingWithMoney
+pay = (amount, x) =>
+  where (x) {
+    Monied(a, b, c) => Monied(a, b + amount, c)
+  }
+
+transformItem :: a -> (InventoryItem -> a) -> String -> ThingWithMoney -> a
+export transformItem = (def, fn, item, monied) => pipe(
+  getInventoryItem(item),
+  map(fn),
+  fromMaybe(def)
+)(monied)
+
+hasInventoryItem :: String -> ThingWithMoney -> Boolean
+export hasInventoryItem = transformItem(false, where {
+  Item(_, _, count) => count > 0  
+})
+
+totalInventoryForItem :: String -> ThingWithMoney -> Integer
+export totalInventoryForItem = transformItem(
+  0,
+  where {
+    Item(_, _, total) => total
+  }
+)
+
+costOfItem :: String -> ThingWithMoney -> Integer
+export costOfItem = transformItem(
+  0,
+  where {
+    Item(_, cost, _) => cost
+  }
+)
+
+modifyInventoryTotal :: (Integer -> Integer) -> InventoryItem -> InventoryItem
+export modifyInventoryTotal = (mod, item) =>
+  where (item) {
+    Item(x, y, i) => Item(x, y, mod(i))
+  }
+
+export decrementInventoryTotal = modifyInventoryTotal((z) => z - 1)
+export incrementInventoryTotal = modifyInventoryTotal((z) => z + 1)
+
+canDecrementItemTotal :: InventoryItem -> Boolean
+export canDecrementItemTotal = where {
+  Item(_, _, x) => x - 1 >= 0
+}
+
+updateInventoryFor :: String -> (InventoryItem -> InventoryItem) -> ThingWithMoney -> ThingWithMoney
+export updateInventoryFor = (item, update, monied) => pipe(
+  where {
+    Monied(name, money, inventory) =>
+      Monied(
+        name,
+        money,
+        pipe(
+          map(where {
+            Item(n, c, t) => n == item ? update(Item(n, c, t)) : Item(n, c, t)
+          })
+        )(inventory)
+      )
+  }
+)(monied)
+
+// this is slightly weird because we silently update the cost here
+giveItem :: String -> Integer -> ThingWithMoney -> ThingWithMoney
+export giveItem = (itemName, cost, monied) => {
+  has = hasInventoryItem(itemName, monied)
+  // prevCost = costOfItem(itemName, monied)
+  // if (has && prevCost != cost) log("The given cost doesn't match the existing cost")
+  return where (monied) {
+    Monied(a, b, inventory) =>
+      Monied(a, b, has ?
+        map(
+          where {
+            Item(n, c, t) =>
+            Item(n, max(cost, c), n == itemName ? t + 1 : t)
+          }
+        )(inventory) :
+        concat(inventory, [Item(itemName, cost, 1)])
+      )
+  }
+}
+
+
+removeItem :: String -> ThingWithMoney -> ThingWithMoney
+export removeItem = (item, monied) => {
+  has = hasInventoryItem(item, monied)
+  return !has ?
+    monied :
+    where (monied) {
+      Monied(a, b, x) =>
+        Monied(a, b, map(
+          when(canDecrementItemTotal, decrementInventoryTotal)
+        )(x))
+    }
+} 
+
+canChargeCustomer :: Integer -> ThingWithMoney -> Boolean
+export canChargeCustomer = (amount, monied) =>
+  where (monied) {
+    Monied(n, money, i) => lt(0, money - amount)
+  }
+
+chargeCustomer :: Integer -> ThingWithMoney -> Maybe ThingWithMoney
+export chargeCustomer = (amount, monied) => pipe(
+  where {
+    Monied(n, money, i) => ifElse(
+      lt(0),
+      (x) => of(Monied(n, x, i)),
+      always(Nothing)
+    )(money - amount)
+  }
+)(monied)
+
+canAfford :: Integer -> ThingWithMoney -> Boolean
+export canAfford = (cost, monied) =>
+  where (monied) {
+    Monied(_, x, _) => x - cost >= 0
+  }
+
+export alias Transaction = { shop :: ThingWithMoney, customer :: ThingWithMoney }
+
+transactTo :: InventoryItem -> ThingWithMoney -> ThingWithMoney
+export transactTo = (item, customer) => pipe(
+  where {
+    Item(name, cost, total) => pipe(
+      when(
+        canAfford(cost),
+        pipe(
+          chargeCustomer(cost),
+          fromMaybe(customer),
+          giveItem(name, cost)
+        )
+      ),
+    )(customer)
+  }
+)(item)
+
+transactFrom :: InventoryItem -> ThingWithMoney -> ThingWithMoney
+export transactFrom = (item, shop) => pipe(
+  where {
+    Item(name, cost, total) => pipe(
+      pay(cost),
+      updateInventoryFor(name, where {
+        Item(x, y, z) => Item(x, y, z - 1)
+      })
+    )(shop)
+  }
+)(item)
+
+order :: ThingWithMoney -> ThingWithMoney -> String -> Transaction
+export order = (shop, customer, item) => {
+  unchanged = always({shop, customer})
+  return ifElse(
+    hasInventoryItem(item),
+    pipe(
+      getInventoryItem(item),
+      map(where {
+        Item(name, cost, total) => do {
+          canAffordCost = canAfford(cost, customer)
+          return {
+            customer: !canAffordCost
+              ? customer
+              : transactTo(Item(name, cost, total), customer),
+            shop: !canAffordCost
+              ? shop
+              : transactFrom(Item(name, cost, total), shop)
+          }
+        }
+      }),
+      fromMaybe({shop, customer})
+    ),
+    unchanged
+  )(shop)
+}
+
+orderAgain :: String -> Transaction -> Transaction
+export orderAgain = (str, x) => order(x.shop, x.customer, str)
